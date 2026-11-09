@@ -1,3 +1,4 @@
+
 import { useState } from "react";
 
 import {
@@ -37,6 +38,8 @@ function Board() {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [nodeCount, setNodeCount] = useState(2);
+  const [newLabel, setNewLabel] = useState("");
+
   const hasSelectedNode = nodes.some((node) => node.selected);
 
   const onConnect = (params: Connection) => {
@@ -86,11 +89,49 @@ function Board() {
     );
   };
 
+  const updateSelectedNodeLabel = () => {
+    const trimmedLabel = newLabel.trim();
+
+    if (!trimmedLabel) {
+      return;
+    }
+
+    setNodes((currentNodes) =>
+      currentNodes.map((node) =>
+        node.selected
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                label: trimmedLabel,
+              },
+            }
+          : node,
+      ),
+    );
+
+    setNewLabel("");
+  };
+
   return (
     <div className="board-container">
       <div className="board-toolbar">
         <button className="add-node-button" onClick={addNode}>
           + Add Node
+        </button>
+
+        <input
+          type="text"
+          placeholder="Enter new node label"
+          value={newLabel}
+          onChange={(event) => setNewLabel(event.target.value)}
+        />
+
+        <button
+          onClick={updateSelectedNodeLabel}
+          disabled={!hasSelectedNode || !newLabel.trim()}
+        >
+          Update Label
         </button>
 
         <button
