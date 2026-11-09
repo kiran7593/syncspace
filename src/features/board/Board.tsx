@@ -10,6 +10,7 @@ import {
   addEdge,
   type Node,
   type Connection,
+  type Edge,
 } from "@xyflow/react";
 
 const initialNodes: Node[] = [
@@ -36,13 +37,53 @@ const initialEdges = [
 function Board() {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+
+  const [past, setPast] = useState<{ nodes: Node[]; edges: Edge[] }[]>([]);
+
+  const [future, setFuture] = useState<{ nodes: Node[]; edges: Edge[] }[]>([]);
+
   const [nodeCount, setNodeCount] = useState(2);
   const [newLabel, setNewLabel] = useState("");
   const [newNodeLabel, setNewNodeLabel] = useState("");
 
   const hasSelectedNode = nodes.some((node) => node.selected);
+  const saveHistory = () => {
+    setPast((currentPast) => [...currentPast, { nodes, edges }]);
+    setFuture([]);
+  };
+
+  const undo = () => {
+    if (past.length === 0) {
+      return;
+    }
+
+    const previousState = past[past.length - 1];
+
+    setFuture((currentFuture) => [{ nodes, edges }, ...currentFuture]);
+
+    setNodes(previousState.nodes);
+    setEdges(previousState.edges);
+
+    setPast((currentPast) => currentPast.slice(0, -1));
+  };
+
+  const redo = () => {
+    if (future.length === 0) {
+      return;
+    }
+
+    const nextState = future[0];
+
+    setPast((currentPast) => [...currentPast, { nodes, edges }]);
+
+    setNodes(nextState.nodes);
+    setEdges(nextState.edges);
+
+    setFuture((currentFuture) => currentFuture.slice(1));
+  };
 
   const onConnect = (params: Connection) => {
+    saveHistory();
     setEdges((currentEdges) => addEdge(params, currentEdges));
   };
 
@@ -56,6 +97,8 @@ function Board() {
   };
 
   const addNode = () => {
+    saveHistory();
+
     const newNode: Node = {
       id: String(nodeCount + 1),
       position: {
@@ -72,6 +115,8 @@ function Board() {
   };
 
   const deleteSelectedNodes = () => {
+    saveHistory();
+
     const selectedNodeIds = new Set(
       nodes.filter((node) => node.selected).map((node) => node.id),
     );
@@ -90,6 +135,8 @@ function Board() {
   };
 
   const updateSelectedNodeLabel = () => {
+    saveHistory();
+
     const trimmedLabel = newLabel.trim();
 
     if (!trimmedLabel) {
@@ -123,6 +170,14 @@ function Board() {
           onChange={(event) => setNewNodeLabel(event.target.value)}
         />
 
+        <button onClick={undo} disabled={past.length === 0}>
+          Undo
+        </button>
+
+        <button onClick={redo} disabled={future.length === 0}>
+          Redo
+        </button>
+
         <button className="add-node-button" onClick={addNode}>
           + Add Node
         </button>
@@ -153,6 +208,7 @@ function Board() {
       <ReactFlow
         nodes={nodes}
         onNodesChange={onNodesChange}
+        onNodeDragStart={saveHistory}
         snapToGrid={true}
         snapGrid={[20, 20]}
         edges={edges}
