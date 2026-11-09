@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 
 import {
@@ -39,6 +38,7 @@ function Board() {
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [nodeCount, setNodeCount] = useState(2);
   const [newLabel, setNewLabel] = useState("");
+  const [newNodeLabel, setNewNodeLabel] = useState("");
 
   const hasSelectedNode = nodes.some((node) => node.selected);
 
@@ -63,7 +63,7 @@ function Board() {
         y: 250,
       },
       data: {
-        label: `New Node ${nodeCount + 1}`,
+        label: newNodeLabel.trim() || `New Node ${nodeCount + 1}`,
       },
     };
 
@@ -116,6 +116,13 @@ function Board() {
   return (
     <div className="board-container">
       <div className="board-toolbar">
+        <input
+          type="text"
+          placeholder="Name your new node"
+          value={newNodeLabel}
+          onChange={(event) => setNewNodeLabel(event.target.value)}
+        />
+
         <button className="add-node-button" onClick={addNode}>
           + Add Node
         </button>
