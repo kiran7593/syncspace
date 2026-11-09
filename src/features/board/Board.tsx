@@ -153,6 +153,8 @@ function Board() {
       <ReactFlow
         nodes={nodes}
         onNodesChange={onNodesChange}
+        snapToGrid={true}
+        snapGrid={[20, 20]}
         edges={edges}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
