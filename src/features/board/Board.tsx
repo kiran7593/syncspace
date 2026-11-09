@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 import {
   Background,
@@ -12,6 +12,7 @@ import {
   type Connection,
   type Edge,
 } from "@xyflow/react";
+import { loadBoard, saveBoard } from "./boardStorage";
 
 const initialNodes: Node[] = [
   {
@@ -35,8 +36,15 @@ const initialEdges = [
 ];
 
 function Board() {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [savedBoard] = useState(() => loadBoard());
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(
+    savedBoard?.nodes ?? initialNodes,
+  );
+
+  const [edges, setEdges, onEdgesChange] = useEdgesState(
+    savedBoard?.edges ?? initialEdges,
+  );
 
   const [past, setPast] = useState<{ nodes: Node[]; edges: Edge[] }[]>([]);
 
@@ -46,6 +54,9 @@ function Board() {
   const [newLabel, setNewLabel] = useState("");
   const [newNodeLabel, setNewNodeLabel] = useState("");
 
+  useEffect(() => {
+    saveBoard({ nodes, edges });
+  }, [nodes, edges]);
   const hasSelectedNode = nodes.some((node) => node.selected);
   const saveHistory = () => {
     setPast((currentPast) => [...currentPast, { nodes, edges }]);
