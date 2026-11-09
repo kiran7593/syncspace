@@ -13,6 +13,7 @@ import {
   type Edge,
 } from "@xyflow/react";
 import { loadBoard, saveBoard } from "./boardStorage";
+import { apiRequest } from "../../lib/api";
 
 const initialNodes: Node[] = [
   {
@@ -37,6 +38,7 @@ const initialEdges = [
 
 function Board() {
   const [savedBoard] = useState(() => loadBoard());
+  const [isBoardLoaded, setIsBoardLoaded] = useState(false);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(
     savedBoard?.nodes ?? initialNodes,
@@ -45,6 +47,36 @@ function Board() {
   const [edges, setEdges, onEdgesChange] = useEdgesState(
     savedBoard?.edges ?? initialEdges,
   );
+
+  useEffect(() => {
+    const loadBoardFromBackend = async () => {
+      try {
+        const data = await apiRequest("/api/boards");
+
+        if (data.board) {
+          setNodes(data.board.nodes);
+          setEdges(data.board.edges);
+
+          const highestNodeNumber = data.board.nodes.reduce(
+            (highest: number, node: { id: string }) =>
+              Math.max(highest, Number(node.id) || 0),
+            0,
+          );
+
+          setNodeCount(highestNodeNumber);
+        }
+      } catch (error) {
+        console.error(
+          "Could not load board from backend. Using local storage instead:",
+          error,
+        );
+      } finally {
+        setIsBoardLoaded(true);
+      }
+    };
+
+    loadBoardFromBackend();
+  }, [setNodes, setEdges]);
 
   const [past, setPast] = useState<{ nodes: Node[]; edges: Edge[] }[]>([]);
 
@@ -55,8 +87,30 @@ function Board() {
   const [newNodeLabel, setNewNodeLabel] = useState("");
 
   useEffect(() => {
+    if (!isBoardLoaded) {
+      return;
+    }
+
     saveBoard({ nodes, edges });
-  }, [nodes, edges]);
+  }, [nodes, edges, isBoardLoaded]);
+
+  useEffect(() => {
+    if (!isBoardLoaded) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      apiRequest("/api/boards", {
+        method: "POST",
+        body: { nodes, edges },
+      }).catch((error) => {
+        console.error("Could not save board to the backend:", error);
+      });
+    }, 500);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [nodes, edges, isBoardLoaded]);
+  
   const hasSelectedNode = nodes.some((node) => node.selected);
   const saveHistory = () => {
     setPast((currentPast) => [...currentPast, { nodes, edges }]);
