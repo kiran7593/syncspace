@@ -47,6 +47,7 @@ function Board() {
   const [edges, setEdges, onEdgesChange] = useEdgesState(
     savedBoard?.edges ?? initialEdges,
   );
+  const [nodeCount, setNodeCount] = useState(2);
 
   useEffect(() => {
     const loadBoardFromBackend = async () => {
@@ -82,7 +83,6 @@ function Board() {
 
   const [future, setFuture] = useState<{ nodes: Node[]; edges: Edge[] }[]>([]);
 
-  const [nodeCount, setNodeCount] = useState(2);
   const [newLabel, setNewLabel] = useState("");
   const [newNodeLabel, setNewNodeLabel] = useState("");
 
@@ -110,7 +110,7 @@ function Board() {
 
     return () => window.clearTimeout(timeoutId);
   }, [nodes, edges, isBoardLoaded]);
-  
+
   const hasSelectedNode = nodes.some((node) => node.selected);
   const saveHistory = () => {
     setPast((currentPast) => [...currentPast, { nodes, edges }]);
