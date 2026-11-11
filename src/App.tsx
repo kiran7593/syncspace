@@ -40,11 +40,22 @@ function App() {
   }, []);
 
   return (
-    <main>
-      <h1>SyncSpace</h1>
-      <p>A collaborative visual workspace</p>
+    <main className="app">
+      <header className="app-header">
+        <div className="app-brand">
+          <h1>SyncSpace</h1>
+          <p>A collaborative visual workspace</p>
+        </div>
 
-      <p>Backend status: {apiStatus}</p>
+        <div className="connection-status">
+          <span
+            className={`status-indicator ${
+              apiStatus.includes("connected") ? "online" : "offline"
+            }`}
+          />
+          <span>{apiStatus}</span>
+        </div>
+      </header>
 
       <Board />
     </main>

@@ -580,10 +580,33 @@ function Board() {
         onEdgesChange={handleEdgesChange}
         onConnect={onConnect}
         onNodeClick={onNodeClick}
+        defaultEdgeOptions={{
+          style: {
+            stroke: "#38bdf8",
+            strokeWidth: 2,
+          },
+        }}
       >
-        <Background />
+        <Background color="#334155" gap={24} size={1.2} />
         <Controls />
-        <MiniMap />
+        <MiniMap
+          nodeColor={(node) => {
+            if (node.selected) return "#f59e0b";
+            return "#38bdf8";
+          }}
+          nodeStrokeColor="#e2e8f0"
+          nodeStrokeWidth={2}
+          maskColor="rgba(15, 23, 42, 0.75)"
+          style={{
+            backgroundColor: "#1e293b",
+            border: "1px solid #475569",
+            borderRadius: "12px",
+            width: 220,
+            height: 150,
+          }}
+          maskStrokeColor="#f8fafc"
+          maskStrokeWidth={2}
+        />
       </ReactFlow>
     </div>
   );
