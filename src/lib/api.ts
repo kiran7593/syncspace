@@ -1,3 +1,4 @@
+
 const API_URL = import.meta.env.VITE_API_URL;
 
 type ApiRequestOptions = {
@@ -14,12 +15,26 @@ export const apiRequest = async (
     headers: {
       "Content-Type": "application/json",
     },
-    body: options.body ? JSON.stringify(options.body) : undefined,
+    body:
+      options.body !== undefined
+        ? JSON.stringify(options.body)
+        : undefined,
   });
 
+  const data = await response.json();
+
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
+    const error = new Error(
+      data.message || `API request failed: ${response.status}`,
+    );
+
+    Object.assign(error, {
+      status: response.status,
+      data,
+    });
+
+    throw error;
   }
 
-  return response.json();
+  return data;
 };

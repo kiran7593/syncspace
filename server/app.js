@@ -1,6 +1,6 @@
-
 const express = require("express");
 const cors = require("cors");
+const { saveBoard } = require("./services/boardService");
 
 const createApp = (pool) => {
   const app = express();
@@ -34,46 +34,32 @@ const createApp = (pool) => {
   });
 
   // Save board to PostgreSQL
+
+  // Save board to PostgreSQL using optimistic concurrency control
   app.post("/api/boards", async (req, res) => {
-    const { nodes, edges } = req.body;
+    const { nodes, edges, revision } = req.body;
 
-    if (!Array.isArray(nodes) || !Array.isArray(edges)) {
-      return res.status(400).json({
+    const result = await saveBoard(pool, { nodes, edges }, revision);
+
+    if (!result.success) {
+      return res.status(result.status).json({
         status: "error",
-        message: "Invalid board data.",
+        message: result.message,
       });
     }
 
-    try {
-      await pool.query(
-        `INSERT INTO boards (id, data)
-         VALUES (1, $1)
-         ON CONFLICT (id)
-         DO UPDATE SET
-           data = EXCLUDED.data,
-           updated_at = NOW()`,
-        [{ nodes, edges }],
-      );
-
-      res.status(201).json({
-        status: "success",
-        message: "Board saved successfully.",
-      });
-    } catch (error) {
-      console.error("Board save failed:", error);
-
-      res.status(500).json({
-        status: "error",
-        message: "Could not save board.",
-      });
-    }
+    res.json({
+      status: "success",
+      message: "Board saved successfully.",
+      revision: result.revision,
+    });
   });
 
   // Load board from PostgreSQL
   app.get("/api/boards", async (req, res) => {
     try {
       const result = await pool.query(
-        "SELECT data FROM boards WHERE id = 1",
+        "SELECT data, revision FROM boards WHERE id = 1",
       );
 
       if (result.rows.length === 0) {
@@ -86,6 +72,7 @@ const createApp = (pool) => {
       res.json({
         status: "success",
         board: result.rows[0].data,
+        revision: result.rows[0].revision,
       });
     } catch (error) {
       console.error("Board load failed:", error);

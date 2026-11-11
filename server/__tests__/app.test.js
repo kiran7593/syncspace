@@ -1,4 +1,3 @@
-
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const request = require("supertest");
@@ -22,7 +21,6 @@ test("GET /api/health returns success when the database is connected", async () 
   );
 });
 
-
 test("GET /api/health returns 500 when the database connection fails", async () => {
   const mockPool = {
     query: async () => {
@@ -39,7 +37,7 @@ test("GET /api/health returns 500 when the database connection fails", async () 
   assert.equal(response.body.message, "Database connection failed.");
 });
 
-test("POST /api/boards saves valid board data", async () => {
+test("POST /api/boards saves valid board data and increments revision", async () => {
   let savedQuery;
   let savedValues;
 
@@ -48,7 +46,7 @@ test("POST /api/boards saves valid board data", async () => {
       savedQuery = query;
       savedValues = values;
 
-      return { rows: [] };
+      return { rows: [{ revision: 2 }] };
     },
   };
 
@@ -67,17 +65,46 @@ test("POST /api/boards saves valid board data", async () => {
 
   const response = await request(app)
     .post("/api/boards")
-    .send(board);
+    .send({ ...board, revision: 1 });
 
-  assert.equal(response.status, 201);
+  assert.equal(response.status, 200);
   assert.equal(response.body.status, "success");
-  assert.equal(
-    response.body.message,
-    "Board saved successfully.",
-  );
+  assert.equal(response.body.revision, 2);
 
-  assert.match(savedQuery, /INSERT INTO boards/);
+  assert.match(savedQuery, /UPDATE boards/);
+  assert.match(savedQuery, /revision = revision \+ 1/);
   assert.deepEqual(savedValues[0], board);
+  assert.equal(savedValues[1], 1);
+});
+
+test("POST /api/boards rejects an outdated revision", async () => {
+  let savedQuery;
+  let savedValues;
+
+  const mockPool = {
+    query: async (query, values) => {
+      savedQuery = query;
+      savedValues = values;
+
+      return { rows: [] };
+    },
+  };
+
+  const app = createApp(mockPool);
+
+  const response = await request(app).post("/api/boards").send({
+    nodes: [],
+    edges: [],
+    revision: 1,
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.body.status, "error");
+  assert.equal(response.body.message, "Board has changed. Please reload.");
+  assert.equal(response.body.revision, undefined);
+
+  assert.match(savedQuery, /UPDATE boards/);
+  assert.equal(savedValues[1], 1);
 });
 
 test("POST /api/boards rejects invalid board data", async () => {
@@ -89,16 +116,15 @@ test("POST /api/boards rejects invalid board data", async () => {
 
   const app = createApp(mockPool);
 
-  const response = await request(app)
-    .post("/api/boards")
-    .send({
-      nodes: "not-an-array",
-      edges: [],
-    });
+  const response = await request(app).post("/api/boards").send({
+    nodes: "not-an-array",
+    edges: [],
+    revision: 1,
+  });
 
   assert.equal(response.status, 400);
   assert.equal(response.body.status, "error");
-  assert.equal(response.body.message, "Invalid board data.");
+  assert.equal(response.body.message, "Invalid board data or revision.");
 });
 
 test("GET /api/boards returns the saved board", async () => {
@@ -115,7 +141,7 @@ test("GET /api/boards returns the saved board", async () => {
 
   const mockPool = {
     query: async () => ({
-      rows: [{ data: board }],
+      rows: [{ data: board, revision: 3 }],
     }),
   };
 
@@ -126,7 +152,8 @@ test("GET /api/boards returns the saved board", async () => {
   assert.equal(response.status, 200);
   assert.equal(response.body.status, "success");
   assert.deepEqual(response.body.board, board);
-});
+  assert.equal(response.body.revision, 3);
+  assert.equal(response.body.revision, 3);});
 
 test("GET /api/boards returns 404 when no saved board exists", async () => {
   const mockPool = {
@@ -169,12 +196,11 @@ test("POST /api/boards returns 500 when the database query fails", async () => {
 
   const app = createApp(mockPool);
 
-  const response = await request(app)
-    .post("/api/boards")
-    .send({
-      nodes: [],
-      edges: [],
-    });
+  const response = await request(app).post("/api/boards").send({
+    nodes: [],
+    edges: [],
+    revision: 1,
+  });
 
   assert.equal(response.status, 500);
   assert.equal(response.body.status, "error");

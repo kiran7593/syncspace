@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 import {
   Background,
@@ -8,11 +8,17 @@ import {
   useNodesState,
   useEdgesState,
   addEdge,
+  applyNodeChanges,
+  applyEdgeChanges,
   type Node,
   type Connection,
   type Edge,
+  type NodeChange,
+  type EdgeChange,
 } from "@xyflow/react";
+
 import { loadBoard, saveBoard } from "./boardStorage";
+import { socket } from "../../lib/socket";
 import { apiRequest } from "../../lib/api";
 
 const initialNodes: Node[] = [
@@ -28,7 +34,7 @@ const initialNodes: Node[] = [
   },
 ];
 
-const initialEdges = [
+const initialEdges: Edge[] = [
   {
     id: "e1-2",
     source: "1",
@@ -36,48 +42,30 @@ const initialEdges = [
   },
 ];
 
+type BoardData = {
+  nodes: Node[];
+  edges: Edge[];
+};
+
+type SaveAcknowledgement = {
+  success: boolean;
+  revision?: number;
+  status?: number;
+  message?: string;
+  board?: BoardData;
+};
+
 function Board() {
   const [savedBoard] = useState(() => loadBoard());
+
   const [isBoardLoaded, setIsBoardLoaded] = useState(false);
+  const [saveStatus, setSaveStatus] = useState("Saved");
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(
-    savedBoard?.nodes ?? initialNodes,
-  );
+  const [nodes, setNodes] = useNodesState(savedBoard?.nodes ?? initialNodes);
 
-  const [edges, setEdges, onEdgesChange] = useEdgesState(
-    savedBoard?.edges ?? initialEdges,
-  );
+  const [edges, setEdges] = useEdgesState(savedBoard?.edges ?? initialEdges);
+
   const [nodeCount, setNodeCount] = useState(2);
-
-  useEffect(() => {
-    const loadBoardFromBackend = async () => {
-      try {
-        const data = await apiRequest("/api/boards");
-
-        if (data.board) {
-          setNodes(data.board.nodes);
-          setEdges(data.board.edges);
-
-          const highestNodeNumber = data.board.nodes.reduce(
-            (highest: number, node: { id: string }) =>
-              Math.max(highest, Number(node.id) || 0),
-            0,
-          );
-
-          setNodeCount(highestNodeNumber);
-        }
-      } catch (error) {
-        console.error(
-          "Could not load board from backend. Using local storage instead:",
-          error,
-        );
-      } finally {
-        setIsBoardLoaded(true);
-      }
-    };
-
-    loadBoardFromBackend();
-  }, [setNodes, setEdges]);
 
   const [past, setPast] = useState<{ nodes: Node[]; edges: Edge[] }[]>([]);
 
@@ -86,34 +74,174 @@ function Board() {
   const [newLabel, setNewLabel] = useState("");
   const [newNodeLabel, setNewNodeLabel] = useState("");
 
-  useEffect(() => {
-    if (!isBoardLoaded) {
+  const revisionRef = useRef<number | null>(null);
+  const pendingBoardRef = useRef<BoardData | null>(null);
+  const isSavingRef = useRef(false);
+  const isBoardDirtyRef = useRef(false);
+
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushBoardSaveRef = useRef<() => void>(() => {});
+
+  const flushBoardSave = () => {
+    if (
+      !isBoardLoaded ||
+      revisionRef.current === null ||
+      isSavingRef.current ||
+      !isBoardDirtyRef.current ||
+      !pendingBoardRef.current ||
+      !socket.connected
+    ) {
       return;
     }
 
-    saveBoard({ nodes, edges });
-  }, [nodes, edges, isBoardLoaded]);
+    const boardToSave = pendingBoardRef.current;
+    const revision = revisionRef.current;
+
+    pendingBoardRef.current = null;
+    isBoardDirtyRef.current = false;
+    isSavingRef.current = true;
+
+    setSaveStatus("Saving...");
+
+    socket.timeout(10000).emit(
+      "board-update",
+      {
+        ...boardToSave,
+        revision,
+      },
+      (error: Error | null, acknowledgement: SaveAcknowledgement) => {
+        isSavingRef.current = false;
+
+        if (error || !acknowledgement) {
+          if (!pendingBoardRef.current) {
+            pendingBoardRef.current = boardToSave;
+            isBoardDirtyRef.current = true;
+          }
+
+          setSaveStatus("Save failed");
+          return;
+        }
+
+        if (!acknowledgement.success) {
+          if (
+            acknowledgement.status === 409 &&
+            acknowledgement.board &&
+            typeof acknowledgement.revision === "number"
+          ) {
+            revisionRef.current = acknowledgement.revision;
+
+            pendingBoardRef.current = null;
+            isBoardDirtyRef.current = false;
+
+            if (saveTimerRef.current) {
+              clearTimeout(saveTimerRef.current);
+              saveTimerRef.current = null;
+            }
+
+            setNodes(acknowledgement.board.nodes);
+            setEdges(acknowledgement.board.edges);
+
+            setNodeCount(
+              acknowledgement.board.nodes.reduce(
+                (highest, node) => Math.max(highest, Number(node.id) || 0),
+                0,
+              ),
+            );
+
+            setSaveStatus("Board changed elsewhere");
+            return;
+          }
+
+          if (!pendingBoardRef.current) {
+            pendingBoardRef.current = boardToSave;
+            isBoardDirtyRef.current = true;
+          }
+
+          setSaveStatus("Save failed");
+          return;
+        }
+
+        if (typeof acknowledgement.revision === "number") {
+          revisionRef.current = acknowledgement.revision;
+        }
+
+        if (isBoardDirtyRef.current) {
+          flushBoardSaveRef.current();
+        } else {
+          setSaveStatus("Saved");
+        }
+      },
+    );
+  };
 
   useEffect(() => {
-    if (!isBoardLoaded) {
-      return;
+    flushBoardSaveRef.current = flushBoardSave;
+  });
+
+  const queueBoardSave = (board: BoardData) => {
+    pendingBoardRef.current = board;
+    isBoardDirtyRef.current = true;
+
+    setSaveStatus("Unsaved changes");
+
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
     }
 
-    const timeoutId = window.setTimeout(() => {
-      apiRequest("/api/boards", {
-        method: "POST",
-        body: { nodes, edges },
-      }).catch((error) => {
-        console.error("Could not save board to the backend:", error);
-      });
+    saveTimerRef.current = setTimeout(() => {
+      flushBoardSaveRef.current();
     }, 500);
+  };
 
-    return () => window.clearTimeout(timeoutId);
-  }, [nodes, edges, isBoardLoaded]);
+  const handleNodesChange = (changes: NodeChange[]) => {
+    const updatedNodes = applyNodeChanges(changes, nodes);
+
+    setNodes(updatedNodes);
+
+    const hasDocumentChange = changes.some(
+      (change) =>
+        change.type === "position" ||
+        change.type === "remove" ||
+        change.type === "add" ||
+        change.type === "replace",
+    );
+
+    if (hasDocumentChange) {
+      queueBoardSave({
+        nodes: updatedNodes,
+        edges,
+      });
+    }
+  };
+
+  const handleEdgesChange = (changes: EdgeChange[]) => {
+    const updatedEdges = applyEdgeChanges(changes, edges);
+
+    setEdges(updatedEdges);
+
+    const hasDocumentChange = changes.some(
+      (change) =>
+        change.type === "remove" ||
+        change.type === "add" ||
+        change.type === "replace",
+    );
+
+    if (hasDocumentChange) {
+      queueBoardSave({
+        nodes,
+        edges: updatedEdges,
+      });
+    }
+  };
 
   const hasSelectedNode = nodes.some((node) => node.selected);
+
   const saveHistory = () => {
     setPast((currentPast) => [...currentPast, { nodes, edges }]);
+
     setFuture([]);
   };
 
@@ -128,6 +256,11 @@ function Board() {
 
     setNodes(previousState.nodes);
     setEdges(previousState.edges);
+
+    queueBoardSave({
+      nodes: previousState.nodes,
+      edges: previousState.edges,
+    });
 
     setPast((currentPast) => currentPast.slice(0, -1));
   };
@@ -144,12 +277,25 @@ function Board() {
     setNodes(nextState.nodes);
     setEdges(nextState.edges);
 
+    queueBoardSave({
+      nodes: nextState.nodes,
+      edges: nextState.edges,
+    });
+
     setFuture((currentFuture) => currentFuture.slice(1));
   };
 
   const onConnect = (params: Connection) => {
     saveHistory();
-    setEdges((currentEdges) => addEdge(params, currentEdges));
+
+    const updatedEdges = addEdge(params, edges);
+
+    setEdges(updatedEdges);
+
+    queueBoardSave({
+      nodes,
+      edges: updatedEdges,
+    });
   };
 
   const onNodeClick = (_: React.MouseEvent, clickedNode: Node) => {
@@ -175,59 +321,213 @@ function Board() {
       },
     };
 
-    setNodes((currentNodes) => [...currentNodes, newNode]);
+    const updatedNodes = [...nodes, newNode];
+
+    setNodes(updatedNodes);
+
+    queueBoardSave({
+      nodes: updatedNodes,
+      edges,
+    });
+
     setNodeCount((count) => count + 1);
   };
 
   const deleteSelectedNodes = () => {
+    if (!nodes.some((node) => node.selected)) {
+      return;
+    }
+
     saveHistory();
 
     const selectedNodeIds = new Set(
       nodes.filter((node) => node.selected).map((node) => node.id),
     );
 
-    setNodes((currentNodes) =>
-      currentNodes.filter((node) => !selectedNodeIds.has(node.id)),
+    const updatedNodes = nodes.filter((node) => !selectedNodeIds.has(node.id));
+
+    const updatedEdges = edges.filter(
+      (edge) =>
+        !selectedNodeIds.has(edge.source) && !selectedNodeIds.has(edge.target),
     );
 
-    setEdges((currentEdges) =>
-      currentEdges.filter(
-        (edge) =>
-          !selectedNodeIds.has(edge.source) &&
-          !selectedNodeIds.has(edge.target),
-      ),
-    );
+    setNodes(updatedNodes);
+    setEdges(updatedEdges);
+
+    queueBoardSave({
+      nodes: updatedNodes,
+      edges: updatedEdges,
+    });
   };
 
   const updateSelectedNodeLabel = () => {
-    saveHistory();
-
     const trimmedLabel = newLabel.trim();
 
-    if (!trimmedLabel) {
+    if (!trimmedLabel || !hasSelectedNode) {
       return;
     }
 
-    setNodes((currentNodes) =>
-      currentNodes.map((node) =>
-        node.selected
-          ? {
-              ...node,
-              data: {
-                ...node.data,
-                label: trimmedLabel,
-              },
-            }
-          : node,
-      ),
+    saveHistory();
+
+    const updatedNodes = nodes.map((node) =>
+      node.selected
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              label: trimmedLabel,
+            },
+          }
+        : node,
     );
+
+    setNodes(updatedNodes);
+
+    queueBoardSave({
+      nodes: updatedNodes,
+      edges,
+    });
 
     setNewLabel("");
   };
 
+  // Listen for updates from other collaborators.
+  useEffect(() => {
+    const handleBoardUpdate = (board: {
+      nodes: Node[];
+      edges: Edge[];
+      revision: number;
+    }) => {
+      revisionRef.current = board.revision;
+
+      setNodes(board.nodes);
+      setEdges(board.edges);
+
+      const highestNodeNumber = board.nodes.reduce(
+        (highest, node) => Math.max(highest, Number(node.id) || 0),
+        0,
+      );
+
+      setNodeCount(highestNodeNumber);
+    };
+
+    const handleBoardSaved = (data: { revision: number }) => {
+      revisionRef.current = data.revision;
+    };
+
+    socket.on("board-update", handleBoardUpdate);
+    socket.on("board-saved", handleBoardSaved);
+
+    return () => {
+      socket.off("board-update", handleBoardUpdate);
+      socket.off("board-saved", handleBoardSaved);
+    };
+  }, [setNodes, setEdges]);
+
+  // Load the latest board and revision from the backend.
+  useEffect(() => {
+    let isActive = true;
+
+    const loadBoardFromBackend = async () => {
+      try {
+        const data = await apiRequest("/api/boards");
+
+        if (!isActive) {
+          return;
+        }
+
+        if (data.board) {
+          revisionRef.current = data.revision;
+
+          setNodes(data.board.nodes);
+          setEdges(data.board.edges);
+
+          const highestNodeNumber = data.board.nodes.reduce(
+            (highest: number, node: { id: string }) =>
+              Math.max(highest, Number(node.id) || 0),
+            0,
+          );
+
+          setNodeCount(highestNodeNumber);
+        }
+      } catch (error) {
+        console.error(
+          "Could not load board from backend. Using local storage instead:",
+          error,
+        );
+      } finally {
+        if (isActive) {
+          setIsBoardLoaded(true);
+        }
+      }
+    };
+
+    loadBoardFromBackend();
+
+    return () => {
+      isActive = false;
+    };
+  }, [setNodes, setEdges]);
+
+  // Save a local copy whenever the board changes.
+  useEffect(() => {
+    if (!isBoardLoaded) {
+      return;
+    }
+
+    saveBoard({ nodes, edges });
+  }, [nodes, edges, isBoardLoaded]);
+
+  // Retry pending saves after the Socket.IO connection returns.
+  useEffect(() => {
+    const handleSocketConnect = () => {
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
+
+      reconnectTimerRef.current = setTimeout(() => {
+        flushBoardSaveRef.current();
+      }, 100);
+    };
+
+    socket.on("connect", handleSocketConnect);
+
+    return () => {
+      socket.off("connect", handleSocketConnect);
+
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Clean up pending timers when the component unmounts.
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Prevent edits while the initial backend load is in progress.
+  if (!isBoardLoaded) {
+    return (
+      <div className="board-container">
+        <p>Loading board...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="board-container">
       <div className="board-toolbar">
+        <span className="save-status">Save status: {saveStatus}</span>
+
         <input
           type="text"
           placeholder="Name your new node"
@@ -272,12 +572,12 @@ function Board() {
 
       <ReactFlow
         nodes={nodes}
-        onNodesChange={onNodesChange}
+        onNodesChange={handleNodesChange}
         onNodeDragStart={saveHistory}
         snapToGrid={true}
         snapGrid={[20, 20]}
         edges={edges}
-        onEdgesChange={onEdgesChange}
+        onEdgesChange={handleEdgesChange}
         onConnect={onConnect}
         onNodeClick={onNodeClick}
       >

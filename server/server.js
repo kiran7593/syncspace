@@ -1,5 +1,8 @@
 
 const path = require("path");
+const http = require("http");
+const { Server } = require("socket.io");
+const { saveBoard } = require("./services/boardService");
 
 require("dotenv").config({
   path: path.resolve(__dirname, "../.env"),
@@ -13,7 +16,148 @@ const PORT = process.env.PORT || 5000;
 
 const app = createApp(pool);
 
-// Start server
-app.listen(PORT, () => {
+// Create an HTTP server using the Express app
+const server = http.createServer(app);
+
+// Attach Socket.IO to the HTTP server
+const io = new Server(server, {
+  cors: {
+    origin: "http://localhost:5173",
+    methods: ["GET", "POST"],
+  },
+});
+
+// Listen for Socket.IO connections
+io.on("connection", (socket) => {
+  let currentRoom = null;
+
+  console.log(`Client connected: ${socket.id}`);
+
+  socket.on("join-room", (roomId) => {
+    if (typeof roomId !== "string" || !roomId.trim()) {
+      return;
+    }
+
+    if (currentRoom) {
+      socket.leave(currentRoom);
+    }
+
+    socket.join(roomId);
+    currentRoom = roomId;
+
+    console.log(`Client ${socket.id} joined room: ${roomId}`);
+  });
+
+  socket.on("board-update", async (board, acknowledge) => {
+    if (!currentRoom) {
+      return;
+    }
+
+    if (
+      !board ||
+      !Array.isArray(board.nodes) ||
+      !Array.isArray(board.edges) ||
+      !Number.isInteger(board.revision)
+    ) {
+      return;
+    }
+
+    try {
+      const result = await saveBoard(
+        pool,
+        {
+          nodes: board.nodes,
+          edges: board.edges,
+        },
+        board.revision,
+      );
+
+      if (!result.success) {
+        if (result.status === 409) {
+          const latestResult = await pool.query(
+            "SELECT data, revision FROM boards WHERE id = 1",
+          );
+
+          const latestBoard = latestResult.rows[0];
+
+          socket.emit("board-save-error", {
+            status: 409,
+            message: result.message,
+            board: latestBoard?.data,
+            revision: latestBoard?.revision,
+          });
+
+          if (typeof acknowledge === "function") {
+            acknowledge({
+              success: false,
+              status: 409,
+              message: result.message,
+              board: latestBoard?.data,
+              revision: latestBoard?.revision,
+            });
+          }
+
+          return;
+        }
+
+        socket.emit("board-save-error", {
+          status: result.status,
+          message: result.message,
+        });
+
+        if (typeof acknowledge === "function") {
+          acknowledge({
+            success: false,
+            status: result.status,
+            message: result.message,
+          });
+        }
+
+        return;
+      }
+
+      const savedBoard = {
+        nodes: board.nodes,
+        edges: board.edges,
+        revision: result.revision,
+      };
+
+      socket.emit("board-saved", {
+        revision: result.revision,
+      });
+
+      if (typeof acknowledge === "function") {
+        acknowledge({
+          success: true,
+          revision: result.revision,
+        });
+      }
+
+      socket.to(currentRoom).emit("board-update", savedBoard);
+    } catch (error) {
+      console.error("Socket board update failed:", error);
+
+      socket.emit("board-save-error", {
+        status: 500,
+        message: "Could not save board.",
+      });
+
+      if (typeof acknowledge === "function") {
+        acknowledge({
+          success: false,
+          status: 500,
+          message: "Could not save board.",
+        });
+      }
+    }
+  });
+
+  socket.on("disconnect", () => {
+    console.log(`Client disconnected: ${socket.id}`);
+  });
+});
+
+// Start the HTTP and Socket.IO server
+server.listen(PORT, () => {
   console.log(`SyncSpace API running on port ${PORT}`);
 });
