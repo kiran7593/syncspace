@@ -156,7 +156,33 @@ io.on("connection", (socket) => {
   });
 });
 
+
 // Start the HTTP and Socket.IO server
 server.listen(PORT, () => {
   console.log(`SyncSpace API running on port ${PORT}`);
 });
+
+// Gracefully close connections when the server shuts down
+
+let isShuttingDown = false;
+
+const shutdown = () => {
+  if (isShuttingDown) return;
+
+  isShuttingDown = true;
+  console.log("Shutting down SyncSpace API...");
+
+  io.close(async () => {
+    try {
+      await pool.end();
+      console.log("Database connections closed.");
+      process.exit(0);
+    } catch (error) {
+      console.error("Error closing database connections:", error);
+      process.exit(1);
+    }
+  });
+};
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
