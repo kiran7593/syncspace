@@ -53,7 +53,7 @@ SyncSpace uses a client-server architecture:
 
 ## Screenshots
 
-![SyncSpace Dashboard](screenshots/syncspace-dashboard.png)
+![SyncSpace Dashboard](./screenshots/syncspace-dashboard.png)
 
 ## Live Application
 
