@@ -8,10 +8,6 @@ SyncSpace is a full-stack web application that allows users to create, edit, and
 
 🔗 **GitHub Repository:** https://github.com/kiran7593/syncspace
 
-## Screenshots
-
-![SyncSpace application showing an interactive workflow canvas](screenshots/syncspace-dashboard.png)
-
 ## Features
 
 - **Interactive canvas:** Create nodes and connect them with edges.
@@ -57,7 +53,7 @@ SyncSpace uses a client-server architecture:
 
 ## Screenshots
 
-<!-- Add application screenshots here -->
+![SyncSpace Dashboard](screenshots/syncspace-dashboard.png)
 
 ## Live Application
 
